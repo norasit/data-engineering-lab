@@ -1,0 +1,19 @@
+# Local environment and secrets
+.env
+
+# Airflow-generated runtime files
+logs/
+config/airflow.cfg
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# dbt-generated artifacts
+target/
+dbt_packages/
+.dbt/
+
+# macOS-generated files
+.DS_Store
