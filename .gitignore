@@ -1,6 +1,8 @@
 # Local environment and secrets
 .env
 
+.venv/
+
 # Airflow-generated runtime files
 logs/
 config/airflow.cfg
