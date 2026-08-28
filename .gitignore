@@ -2,7 +2,7 @@
 .env
 
 .venv/
-
+secrets/
 # Airflow-generated runtime files
 logs/
 config/airflow.cfg
@@ -19,3 +19,5 @@ dbt_packages/
 
 # macOS-generated files
 .DS_Store
+
+samples/
