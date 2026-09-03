@@ -2,7 +2,7 @@
 
 ## Current Checkpoint
 
-Last updated: 2026-08-29
+Last updated: 2026-09-04
 
 Development environment has been migrated from macOS to Ubuntu.
 
@@ -71,7 +71,7 @@ Current station status path:
 
 Example:
 
-`station_status_20260829_082000.json`
+`station_status_20260904_052000.json`
 
 The Ubuntu Airflow runtime is now producing the scheduled S3 snapshots.
 
@@ -137,6 +137,7 @@ GBFS API
 -> Airflow
 -> original JSON bytes
 -> S3 raw snapshot
+-> trigger `citibike_station_status_to_bq`
 
 Schedule:
 
@@ -147,6 +148,10 @@ Timezone:
 `Asia/Bangkok`
 
 Raw snapshots are working successfully.
+
+After the S3 upload succeeds, the DAG automatically triggers
+`citibike_station_status_to_bq` and passes the exact upstream logical/scheduled
+time through `dag_run.conf` as `snapshot_at`.
 
 ---
 
@@ -162,7 +167,11 @@ DAG ID:
 
 Current schedule:
 
-manual only (`schedule=None`)
+no independent schedule (`schedule=None`)
+
+The DAG is triggered automatically by `citibike_station_status_poll` after a
+successful raw S3 upload. It can also be triggered manually for controlled
+reprocessing.
 
 Current flow:
 
@@ -187,7 +196,7 @@ Target table:
 
 ---
 
-## Manual Snapshot Selection
+## Snapshot Selection
 
 DAG 2 accepts:
 
@@ -210,6 +219,10 @@ This value is authoritative for:
 
 The DAG does not search for the latest S3 object.
 
+For automatic runs, DAG 1 passes the same timezone-aware Bangkok timestamp used
+to construct the S3 object key. This preserves one snapshot identity across the
+raw S3 and BigQuery ingestion stages.
+
 ---
 
 ## BigQuery Validation Test
@@ -231,6 +244,41 @@ All three DAG tasks completed successfully after GCP Billing was enabled.
 Data was written successfully to:
 
 `data-engineering-lab-nk.nyc_citibike.station_status_snapshot`
+
+---
+
+## Automatic End-to-End Validation Test
+
+A real scheduled run was verified successfully.
+
+Upstream scheduled snapshot:
+
+`2026-09-04T05:20:00+07:00`
+
+Source object:
+
+`station_status_20260904_052000.json`
+
+The upstream DAG completed its S3 upload and automatically triggered
+`citibike_station_status_to_bq` at approximately `05:20:03 Asia/Bangkok`.
+
+The downstream DAG received the exact upstream snapshot time through:
+
+```json
+{
+  "snapshot_at": "2026-09-04T05:20:00+07:00"
+}
+```
+
+The corresponding BigQuery `snapshot_at` is:
+
+`2026-09-03 22:20:00 UTC`
+
+BigQuery ingestion completed successfully for the same snapshot.
+
+Result:
+
+PASS
 
 ---
 
@@ -294,9 +342,8 @@ Schema evolution requires human review.
 
 Raw ingestion DAG already exists and has been tested.
 
-However, further work on `station_information` is intentionally paused until the `station_status` pipeline is completed.
-
-Do not interleave additional station_information development yet.
+With the current `station_status` phase complete, `station_information` is now
+the next main pipeline work item.
 
 ---
 
@@ -316,20 +363,23 @@ Billing-related DML blocker is resolved.
 
 Idempotent rerun has been verified.
 
+The automatic DAG 1 to DAG 2 handoff has been verified with a real scheduled
+run. The exact snapshot identity was preserved from the Bangkok-local S3 object
+key through the UTC BigQuery timestamp.
+
+The `station_status` pipeline is complete end-to-end for the current phase.
+
 ---
 
 # Next Steps
 
 When development resumes:
 
-1. Review whether DAG 1 should automatically trigger DAG 2.
-2. If implemented, explicitly pass the upstream `snapshot_at` to DAG 2.
-3. Keep DAG 2 without its own independent polling schedule.
-4. Verify automatic end-to-end execution.
-5. Begin dbt integration.
-6. Create a dbt staging model for station status.
-7. Add semantic type conversions and data-quality logic in dbt.
-8. Return to `station_information` after station_status is complete.
+1. Continue the `station_information` pipeline.
+2. Complete and verify `station_information` end-to-end.
+3. Begin dbt integration after the ingestion pipelines are ready.
+4. Create dbt staging models for the Citi Bike datasets.
+5. Add semantic type conversions and data-quality logic in dbt.
 
 Possible later improvements:
 

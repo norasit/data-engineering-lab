@@ -4,6 +4,7 @@ from urllib.request import Request, urlopen
 
 import boto3
 import pendulum
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import dag, get_current_context, task
 
 
@@ -21,8 +22,8 @@ LOGGER = logging.getLogger(__name__)
     catchup=False,
 )
 def citibike_station_status_poll():
-    @task(retries=1, do_xcom_push=False)
-    def fetch_station_status():
+    @task(retries=1)
+    def fetch_station_status() -> str:
         logical_date = get_current_context().get("logical_date")
         if logical_date is None:
             raise ValueError("DAG run must have a logical date")
@@ -100,8 +101,14 @@ def citibike_station_status_poll():
             len(stations),
             station_ids[:5],
         )
+        return scheduled_at_bangkok.isoformat()
 
-    fetch_station_status()
+    snapshot_at = fetch_station_status()
+    TriggerDagRunOperator(
+        task_id="trigger_station_status_to_bq",
+        trigger_dag_id="citibike_station_status_to_bq",
+        conf={"snapshot_at": snapshot_at},
+    )
 
 
 citibike_station_status_poll()
