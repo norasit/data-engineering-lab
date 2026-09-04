@@ -306,44 +306,261 @@ The transactional snapshot replacement prevents duplicate rows when the same sna
 
 ---
 
-## station_status Schema Contract
+# GBFS Schema Baseline
 
-Required source fields include:
+## Observation Date
 
-- station_id
-- num_bikes_available
-- num_docks_available
-- is_installed
-- is_renting
-- is_returning
-- last_reported
+The current schema assessment is based on:
 
-Optional fields may be stored as NULL when absent.
+- official GBFS v1.1 documentation
+- actual Citi Bike raw JSON snapshots observed through early September 2026
+- most recent reviewed source files dated 2026-09-04
 
-Known Citi Bike extension fields currently supported:
+The current source payloads for both station feeds declare:
 
-- legacy_id
-- eightd_has_available_keys
-- num_ebikes_available
-- num_scooters_available
-- num_scooters_unavailable
+`version = "1.1"`
 
-Unknown source fields:
+Therefore, the current ingestion contracts are explicitly based on GBFS v1.1.
 
-warn and continue ingesting known columns.
+GBFS v1.1 is an older/deprecated specification version, but it remains the correct baseline for these Citi Bike payloads because the source itself declares version 1.1.
 
-Do not automatically add new BigQuery columns.
-
-Schema evolution requires human review.
+Do not redesign the ingestion schema against the latest GBFS version unless the source feed version changes.
 
 ---
 
-# station_information
+# station_status Schema Contract
 
-Raw ingestion DAG already exists and has been tested.
+## Purpose
 
-With the current `station_status` phase complete, `station_information` is now
-the next main pipeline work item.
+`station_status` represents operational station availability at a point in time.
+
+The project polls this feed every 10 minutes and stores historical snapshots.
+
+Target table:
+
+`data-engineering-lab-nk.nyc_citibike.station_status_snapshot`
+
+Grain:
+
+`(snapshot_at, station_id)`
+
+## Snapshot Metadata
+
+Project-generated / envelope fields:
+
+- `snapshot_at`
+- `snapshot_date`
+- `ingested_at`
+- `source_object_uri`
+
+Feed-level fields:
+
+- `version`
+- `last_updated`
+- `ttl`
+
+## Official GBFS v1.1 Station Fields
+
+The current contract includes the standard station-status fields used by the Citi Bike v1.1 payload:
+
+- `station_id`
+- `num_bikes_available`
+- `num_bikes_disabled`
+- `num_docks_available`
+- `num_docks_disabled`
+- `is_installed`
+- `is_renting`
+- `is_returning`
+- `last_reported`
+
+Core required fields are validated strictly.
+
+Optional fields are nullable.
+
+## Citi Bike Provider Extensions
+
+The current source also includes known Citi Bike-specific fields:
+
+- `legacy_id`
+- `eightd_has_available_keys`
+- `num_ebikes_available`
+- `num_scooters_available`
+- `num_scooters_unavailable`
+
+These fields are not treated as core GBFS validity requirements.
+
+They are stored because they are present in the actual provider payload and may be useful analytically.
+
+Provider-extension fields are nullable where appropriate.
+
+## Early September 2026 Observations
+
+A multi-snapshot review showed:
+
+- stable station-level schema across the reviewed snapshots
+- no datatype drift in the known fields
+- `station_id` unique within each snapshot
+- scooter-related fields are not present on every record
+- missing optional/provider fields are stored as NULL
+- `last_reported` may contain structurally valid but operationally stale values
+
+Timestamp freshness is treated separately from structural schema validation.
+
+## Validation Policy
+
+- feed version must equal `1.1`
+- missing required official field -> fail
+- invalid required datatype -> fail
+- missing optional field -> NULL
+- invalid optional datatype when present -> fail
+- unknown field -> warning, continue ingesting known fields
+- duplicate station_id within a snapshot -> fail
+- negative availability counts -> fail
+- status flags must conform to the expected v1.1 representation
+
+The complete raw JSON remains preserved in S3.
+
+---
+
+# station_information Schema Contract
+
+## Purpose
+
+`station_information` represents relatively stable station reference metadata such as:
+
+- identity
+- public name
+- coordinates
+- station capacity
+- supported rental methods
+
+The feed is ingested as a daily historical snapshot rather than as a current-only dimension.
+
+Target table:
+
+`data-engineering-lab-nk.nyc_citibike.station_information_snapshot`
+
+The `station_information_snapshot` table has already been created manually in
+BigQuery and is ready for the S3-to-BigQuery DAG implementation.
+
+Grain:
+
+`(snapshot_at, station_id)`
+
+The raw ingestion DAG already exists and has been tested. With the current
+`station_status` phase complete, `station_information` is the next main pipeline
+work item.
+
+## Snapshot Metadata
+
+Project-generated / envelope fields:
+
+- `snapshot_at`
+- `snapshot_date`
+- `ingested_at`
+- `source_object_uri`
+
+Feed-level fields:
+
+- `version`
+- `last_updated`
+- `ttl`
+
+## Official GBFS v1.1 Fields Included in the Current Contract
+
+- `station_id`
+- `name`
+- `short_name`
+- `lat`
+- `lon`
+- `region_id`
+- `capacity`
+- `rental_methods`
+- `rental_uris`
+
+Observed behavior through early September 2026:
+
+- `station_id` is present and unique within each reviewed snapshot
+- `name`, `lat`, and `lon` are consistently present
+- `region_id` is not present on every station record
+- `capacity` is observed as a non-negative integer
+- `rental_methods` is an array of strings
+- `rental_uris` is an object containing provider deep links
+
+The BigQuery contract therefore keeps `region_id` nullable.
+
+## rental_uris Representation
+
+The target table stores:
+
+- `android`
+- `ios`
+- `web`
+
+inside a BigQuery STRUCT.
+
+The currently observed Citi Bike files primarily populate Android and iOS links.
+
+The `web` field is included because it belongs to the recognized rental URI structure even though it is not currently populated in the reviewed samples.
+
+## Citi Bike Provider Extensions
+
+The current source includes the following reviewed provider-specific fields:
+
+- `has_kiosk`
+- `station_type`
+- `external_id`
+- `electric_bike_surcharge_waiver`
+- `eightd_station_services`
+- `eightd_has_key_dispenser`
+
+These fields are retained because they exist in the real Citi Bike payload.
+
+They are not treated as required GBFS v1.1 fields and are nullable in the target contract.
+
+## Fields Not Yet Materialized
+
+Some optional GBFS fields may exist in the specification but have not been observed in the reviewed Citi Bike payloads.
+
+The project does not automatically create BigQuery columns for every optional field in the specification.
+
+If a currently unmodeled field appears:
+
+1. raw S3 preserves it
+2. ingestion logs a warning
+3. known fields continue to load
+4. human review determines whether the BigQuery schema should evolve
+
+## Early September 2026 Observations
+
+Four reviewed station_information snapshots:
+
+- 2026-08-28
+- 2026-08-29
+- 2026-09-03
+- 2026-09-04
+
+showed approximately 2.5k stations per snapshot.
+
+The station count changed slightly between snapshots, confirming that station_information should not be treated as a perfectly static master.
+
+The project therefore stores historical daily snapshots.
+
+## Validation Policy
+
+- feed version must equal `1.1`
+- missing required official field -> fail
+- invalid required datatype -> fail
+- missing optional official field -> NULL
+- invalid optional datatype when present -> fail
+- missing known provider extension -> NULL
+- unknown field -> warning, continue ingesting known fields
+- duplicate station_id within a snapshot -> fail
+- capacity < 0 -> fail
+- latitude outside [-90, 90] -> fail
+- longitude outside [-180, 180] -> fail
+
+The complete raw JSON remains preserved in S3.
 
 ---
 

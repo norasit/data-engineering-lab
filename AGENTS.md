@@ -83,22 +83,6 @@ For Citi Bike GBFS feeds:
 - raw storage is append-only by snapshot
 - do not flatten or reserialize raw source data before storage
 
-### Schema Evolution
-
-Do not automatically evolve downstream schemas when an unknown source field appears.
-
-Current policy:
-
-- required field missing/null -> fail
-- required datatype mismatch -> fail
-- optional field missing -> accept as NULL
-- optional datatype mismatch when present -> fail
-- unknown field -> warn and continue ingesting known fields
-
-Raw S3 data remains the recovery source for future schema changes and backfills.
-
-Schema changes require human review.
-
 ### Idempotency
 
 Pipelines should support safe reruns where practical.
@@ -109,6 +93,131 @@ For snapshot ingestion, the logical grain is:
 
 Reprocessing the same snapshot must not create duplicate target rows.
 
+## GBFS Specification and Schema Contract Policy
+
+### Specification Baseline
+
+The Citi Bike feeds currently ingested by this project declare:
+
+`version = "1.1"`
+
+Therefore, the ingestion-layer schema contracts for both:
+
+- `station_status`
+- `station_information`
+
+must be validated against the GBFS v1.1 specification, not against the latest GBFS version.
+
+The current GBFS specification may differ materially from v1.1. Do not treat a difference between the Citi Bike feed and the latest GBFS documentation as a source defect until the declared feed version has been checked.
+
+If the source feed version changes from `1.1` to another version, the existing ingestion contract must not silently continue.
+
+A version change requires:
+
+1. validation failure
+2. human review of the new GBFS version
+3. comparison of the official schema with actual source payloads
+4. explicit schema and code changes if required
+
+### Source-of-Truth Hierarchy
+
+Schema decisions should use both:
+
+1. the official GBFS v1.1 specification
+2. actual Citi Bike JSON payloads observed from the source
+
+The official specification defines the standard contract.
+
+Actual payloads are used to identify:
+
+- provider-specific extensions
+- optional fields that are not always present
+- observed datatypes
+- real-world null/missing behavior
+- schema drift
+
+Do not infer schema only from one source.
+
+### Field Classification
+
+Every source field should be classified as one of:
+
+1. Official GBFS v1.1 field
+2. Known Citi Bike / provider-specific extension
+3. Unknown field not yet included in the project contract
+
+### Required Official Fields
+
+If an official field that is required by the active GBFS v1.1 contract is:
+
+- missing
+- null when not allowed
+- of the wrong datatype
+
+the ingestion must fail.
+
+### Optional Official Fields
+
+If an optional official field is absent:
+
+- accept the record
+- store NULL where applicable
+
+If an optional field is present but has an invalid datatype:
+
+- fail validation
+
+### Known Provider Extensions
+
+Citi Bike may include fields that are not part of the GBFS v1.1 standard.
+
+Known provider extensions may be stored in BigQuery when they are useful and have been explicitly reviewed.
+
+Provider-extension columns should generally remain nullable even if they are present in all currently observed records.
+
+The pipeline must not depend on provider extensions for core GBFS validity.
+
+### Unknown Fields
+
+If a new field appears that is not in the current schema contract:
+
+- emit a warning
+- continue ingesting known columns
+- preserve the complete original payload in S3
+- do not automatically add a BigQuery column
+
+Schema evolution requires human review.
+
+### Historical Raw Preservation
+
+Raw S3 objects preserve the original source response.
+
+This allows:
+
+- schema investigation
+- future backfills
+- replay after schema evolution
+- comparison between provider behavior and the official specification
+
+### Feed-Specific Validation
+
+For both station feeds:
+
+- feed version must equal `1.1`
+- duplicate `station_id` within a snapshot must fail validation
+
+For `station_status`:
+
+- negative availability counts must fail validation
+- status flags must conform to the expected GBFS v1.1 representation
+- timestamp freshness is separate from structural schema validation
+
+For `station_information`:
+
+- `capacity < 0` must fail validation
+- latitude outside `[-90, 90]` must fail validation
+- longitude outside `[-180, 180]` must fail validation
+
 ## Citi Bike Conventions
 
 Current feeds:
@@ -116,7 +225,9 @@ Current feeds:
 - `station_status`
 - `station_information`
 
-Current priority is to complete `station_status` end-to-end before continuing work on `station_information`.
+The `station_status` pipeline is complete for the current phase.
+
+Current priority is `station_information`.
 
 ### station_status
 
@@ -130,6 +241,14 @@ S3 raw layout:
 
 The timestamp in the object name represents the Airflow logical/scheduled time in Asia/Bangkok.
 
+### station_information
+
+Store `station_information` as daily historical snapshots rather than as a current-only dimension.
+
+The logical grain is:
+
+`(snapshot_at, station_id)`
+
 ### BigQuery
 
 GCP project:
@@ -140,9 +259,10 @@ Dataset:
 
 `nyc_citibike`
 
-Current station status target table:
+Current BigQuery ingestion target tables:
 
-`data-engineering-lab-nk.nyc_citibike.station_status_snapshot`
+- `data-engineering-lab-nk.nyc_citibike.station_status_snapshot`
+- `data-engineering-lab-nk.nyc_citibike.station_information_snapshot`
 
 The ingestion table keeps source-oriented field names.
 
