@@ -2,7 +2,7 @@
 
 ## Current Checkpoint
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 
 Development environment has been migrated from macOS to Ubuntu.
 
@@ -440,16 +440,93 @@ Target table:
 
 `data-engineering-lab-nk.nyc_citibike.station_information_snapshot`
 
-The `station_information_snapshot` table has already been created manually in
-BigQuery and is ready for the S3-to-BigQuery DAG implementation.
+The `station_information_snapshot` table has been created manually in BigQuery.
+
+The S3-to-BigQuery DAG is implemented in:
+
+`dags/citibike_station_information_to_bq.py`
+
+DAG ID:
+
+`citibike_station_information_to_bq`
+
+It has no independent schedule (`schedule=None`).
+
+The raw ingestion DAG is:
+
+`dags/citibike_station_information.py`
+
+DAG ID:
+
+`citibike_station_information_poll`
+
+Schedule:
+
+`0 6 * * *`
+
+Timezone:
+
+`Asia/Bangkok`
+
+`catchup=False`
+
+Current end-to-end flow:
+
+GBFS API
+-> Airflow
+-> original JSON bytes
+-> S3 raw snapshot
+-> automatic trigger
+-> `citibike_station_information_to_bq`
+-> schema validation
+-> BigQuery staging table
+-> staging validation
+-> transactional DELETE + INSERT
+-> `station_information_snapshot`
+-> drop staging table
+
+The raw upload task returns the exact timezone-aware Bangkok logical/scheduled
+timestamp used to construct the S3 object key. The downstream trigger passes
+that same value through `dag_run.conf["snapshot_at"]`.
+
+Neither DAG searches for the latest S3 object.
+
+## station_information Validation Results
+
+Manual S3-to-BigQuery validation passed successfully on 2026-09-08.
+
+Verified:
+
+- all three downstream tasks completed successfully
+- data was loaded into `station_information_snapshot`
+- `snapshot_at`, `snapshot_date`, and source-object identity were consistent
+- the staging table was cleaned up after successful replacement
+- rerunning the exact same snapshot did not create duplicate target rows
+
+Idempotency result:
+
+PASS
+
+The automatic DAG 1 to DAG 2 handoff was also tested successfully by manually
+triggering `citibike_station_information_poll`.
+
+Verified:
+
+- a new raw JSON object was written to S3
+- `citibike_station_information_to_bq` was triggered automatically
+- new snapshot data was written successfully to BigQuery
+
+Automatic handoff result:
+
+PASS
+
+A naturally scheduled `06:00 Asia/Bangkok` run has not yet been separately
+verified, but the complete trigger path has been proven through a real manual
+upstream DAG run using live S3 and BigQuery resources.
 
 Grain:
 
 `(snapshot_at, station_id)`
-
-The raw ingestion DAG already exists and has been tested. With the current
-`station_status` phase complete, `station_information` is the next main pipeline
-work item.
 
 ## Snapshot Metadata
 
@@ -505,18 +582,33 @@ The `web` field is included because it belongs to the recognized rental URI stru
 
 ## Citi Bike Provider Extensions
 
-The current source includes the following reviewed provider-specific fields:
+The BigQuery ingestion contract retains these reviewed provider-specific fields:
 
 - `has_kiosk`
 - `station_type`
 - `external_id`
 - `electric_bike_surcharge_waiver`
-- `eightd_station_services`
-- `eightd_has_key_dispenser`
 
 These fields are retained because they exist in the real Citi Bike payload.
 
 They are not treated as required GBFS v1.1 fields and are nullable in the target contract.
+
+### Intentionally Excluded Provider Fields
+
+On 2026-09-08, the human developer manually dropped these target columns and
+approved excluding them from the BigQuery ingestion contract:
+
+- `eightd_station_services`
+- `eightd_has_key_dispenser`
+
+Neither field is validated or materialized. When present in raw JSON, both are
+ignored without unknown-field warnings. Their original values remain preserved
+in the unchanged raw S3 payload. Other unknown fields still warn and continue.
+No BigQuery writes or DDL are part of this code and documentation update.
+
+The reviewed 2026-09-04 snapshot contains eight stations with service objects
+inside `eightd_station_services`, which did not match its former REPEATED STRING
+column. Excluding this field removes that ingestion schema mismatch.
 
 ## Fields Not Yet Materialized
 
@@ -566,25 +658,35 @@ The complete raw JSON remains preserved in S3.
 
 # Current Milestone
 
-The following station_status path is now proven:
+Both Citi Bike ingestion pipelines are now proven end-to-end for the current phase:
+
+- `station_status`
+- `station_information`
+
+Common proven pattern:
 
 GBFS API
 -> Airflow
 -> S3 raw JSON
+-> automatic DAG handoff
 -> validation
 -> BigQuery staging
 -> transactional target replacement
--> BigQuery target
+-> BigQuery snapshot target
+-> staging cleanup
 
 Billing-related DML blocker is resolved.
 
-Idempotent rerun has been verified.
+Idempotent reruns have been verified for both snapshot pipelines.
 
-The automatic DAG 1 to DAG 2 handoff has been verified with a real scheduled
-run. The exact snapshot identity was preserved from the Bangkok-local S3 object
-key through the UTC BigQuery timestamp.
+For `station_status`, the automatic handoff has been verified with a real
+scheduled run.
 
-The `station_status` pipeline is complete end-to-end for the current phase.
+For `station_information`, the automatic handoff has been verified with a real
+manual upstream DAG run using live S3 and BigQuery resources. The natural
+`06:00 Asia/Bangkok` scheduled run has not yet been separately observed.
+
+The ingestion layer is ready for the next phase: dbt integration.
 
 ---
 
@@ -592,11 +694,11 @@ The `station_status` pipeline is complete end-to-end for the current phase.
 
 When development resumes:
 
-1. Continue the `station_information` pipeline.
-2. Complete and verify `station_information` end-to-end.
-3. Begin dbt integration after the ingestion pipelines are ready.
-4. Create dbt staging models for the Citi Bike datasets.
-5. Add semantic type conversions and data-quality logic in dbt.
+1. Begin dbt integration.
+2. Create dbt staging models for `station_status_snapshot` and `station_information_snapshot`.
+3. Add semantic type conversions and data-quality logic in dbt.
+4. Define simple downstream models only after the staging layer is clear and tested.
+5. Optionally observe one natural `06:00 Asia/Bangkok` station_information run as an additional operational check.
 
 Possible later improvements:
 

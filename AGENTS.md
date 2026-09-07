@@ -225,9 +225,9 @@ Current feeds:
 - `station_status`
 - `station_information`
 
-The `station_status` pipeline is complete for the current phase.
+The `station_status` and `station_information` ingestion pipelines are complete for the current phase.
 
-Current priority is `station_information`.
+Current priority is dbt integration and building staging models on top of the proven ingestion tables.
 
 ### station_status
 
@@ -244,6 +244,25 @@ The timestamp in the object name represents the Airflow logical/scheduled time i
 ### station_information
 
 Store `station_information` as daily historical snapshots rather than as a current-only dimension.
+
+Polling frequency:
+
+- daily at `0 6 * * *` in Asia/Bangkok
+
+After a successful raw S3 upload, `citibike_station_information_poll`
+automatically triggers `citibike_station_information_to_bq` and passes the exact
+timezone-aware Bangkok snapshot timestamp through `dag_run.conf["snapshot_at"]`.
+
+The following provider-specific fields are intentionally excluded from the
+BigQuery ingestion contract by human decision:
+
+- `eightd_station_services`
+- `eightd_has_key_dispenser`
+
+Do not validate or materialize these fields. If present, ignore them without
+unknown-field warnings; the complete original payload remains preserved in S3.
+The human developer has manually dropped both target columns. Do not recreate
+them. Other unknown fields still follow the warning-and-continue policy.
 
 The logical grain is:
 
