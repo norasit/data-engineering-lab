@@ -1,0 +1,15 @@
+version: 2
+
+sources:
+  - name: citibike
+    database: data-engineering-lab-nk
+    schema: nyc_citibike
+
+    tables:
+      - name: station_status_snapshot
+        description: >
+          Ingestion snapshot table for the Citi Bike GBFS station_status feed.
+
+      - name: station_information_snapshot
+        description: >
+          Ingestion snapshot table for the Citi Bike GBFS station_information feed.

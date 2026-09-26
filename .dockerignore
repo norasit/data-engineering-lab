@@ -1,0 +1,4 @@
+# The image installs packages only; no repository files belong in its context.
+**
+!Dockerfile
+!.dockerignore

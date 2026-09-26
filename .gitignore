@@ -21,3 +21,8 @@ dbt_packages/
 .DS_Store
 
 samples/
+
+.venv-dbt/
+dbt/.user.yml
+dbt/citibike/logs/
+dbt/citibike/target/

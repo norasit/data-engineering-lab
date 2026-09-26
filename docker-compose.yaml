@@ -46,11 +46,7 @@
 ---
 x-airflow-common:
   &airflow-common
-  # In order to add custom dependencies or upgrade provider distributions you can use your extended image.
-  # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
-  # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
   image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.1}
-  # build: .
   env_file:
     - ${ENV_FILE_PATH:-.env}
   environment:
@@ -76,6 +72,10 @@ x-airflow-common:
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    # Docker bind sources are paths on the Ubuntu host, not inside Airflow.
+    DBT_HOST_PROJECT_DIR: ${DBT_HOST_PROJECT_DIR:-${PWD}}
+    DBT_UID: ${DBT_UID:-1000}
+    DBT_GID: ${DBT_GID:-1000}
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
@@ -89,6 +89,17 @@ x-airflow-common:
       condition: service_healthy
 
 services:
+  # On-demand runtime: docker compose --profile dbt run --rm dbt debug
+  dbt:
+    profiles: [dbt]
+    image: citibike-dbt:1.12.4-bigquery1.12.0
+    build: .
+    user: "${DBT_UID:-1000}:${DBT_GID:-1000}"
+    volumes:
+      - ./dbt/citibike:/usr/app/dbt/citibike
+      - ./dbt/profiles:/usr/app/dbt/profiles:ro
+      - ./secrets/gcp-service-account.json:/usr/app/secrets/gcp-service-account.json:ro
+
   postgres:
     image: postgres:16
     environment:
@@ -123,6 +134,16 @@ services:
 
   airflow-scheduler:
     <<: *airflow-common
+    # LocalExecutor runs DockerOperator here. No other service gets the socket.
+    group_add:
+      - "${DOCKER_GID:-984}"
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+      - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
+      - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
+      - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+      - ./secrets:/opt/airflow/secrets:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     command: scheduler
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']

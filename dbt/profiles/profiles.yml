@@ -1,0 +1,12 @@
+# Container-only profile. Host dbt continues using ~/.dbt/profiles.yml.
+citibike:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      project: data-engineering-lab-nk
+      dataset: nyc_citibike_dbt
+      threads: 4
+      keyfile: /usr/app/secrets/gcp-service-account.json
+      location: asia-southeast1
